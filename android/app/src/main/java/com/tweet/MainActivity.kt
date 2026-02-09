@@ -1,4 +1,4 @@
-package com.mytweet
+package com.tweet
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
