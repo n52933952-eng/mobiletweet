@@ -199,54 +199,120 @@ const FeedScreen = ({ navigation }: any) => {
   const feedTypeRef = useRef(feedType);
   feedTypeRef.current = feedType;
 
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [newTweetsCount, setNewTweetsCount] = useState(0);
+  const pendingNewTweetsRef = useRef<any[]>([]);
+  const SCROLL_THRESHOLD_FOR_BUBBLE = 120; // Show "X posted" when user has scrolled down this much
+
   useEffect(() => {
+    setPage(1);
+    setHasMore(true);
     fetchTweets();
   }, [activeTab]);
 
-  const fetchTweets = async (appendNewOnly = false) => {
+  const fetchTweets = async (appendNewOnly = false, pageToFetch?: number) => {
     const currentFeedType = appendNewOnly ? feedTypeRef.current : feedType;
+    const isLoadMore = pageToFetch != null && pageToFetch > 1;
+    const requestPage = isLoadMore ? pageToFetch : 1;
     try {
-      if (!appendNewOnly) setLoading(true);
-      const response = await apiService.get(`/api/tweets/feed?feedType=${currentFeedType}`);
+      if (!appendNewOnly && !isLoadMore) setLoading(true);
+      if (isLoadMore) setLoadingMore(true);
+      const response = await apiService.get(
+        `/api/tweets/feed?feedType=${currentFeedType}&page=${requestPage}&limit=20`
+      );
       const newList = response.tweets || [];
+      const pagination = response.pagination || {};
+
       if (appendNewOnly && newList.length > 0) {
+        const atTop = lastScrollY.current <= SCROLL_THRESHOLD_FOR_BUBBLE;
+        if (atTop) {
+          setTweets((prev) => {
+            const prevIds = new Set(prev.map((t: any) => t._id));
+            const toPrepend = newList.filter((t: any) => !prevIds.has(t._id));
+            if (toPrepend.length === 0) return prev;
+            return [...toPrepend, ...prev];
+          });
+        } else {
+          setTweets((prev) => {
+            const prevIds = new Set(prev.map((t: any) => t._id));
+            const toPrepend = newList.filter((t: any) => !prevIds.has(t._id));
+            if (toPrepend.length === 0) return prev;
+            const existingPendingIds = new Set(pendingNewTweetsRef.current.map((t: any) => t._id?.toString()));
+            const toAdd = toPrepend.filter((t: any) => !existingPendingIds.has(t._id?.toString()));
+            if (toAdd.length > 0) {
+              pendingNewTweetsRef.current = [...toAdd, ...pendingNewTweetsRef.current];
+              setNewTweetsCount((c) => c + toAdd.length);
+            }
+            return prev;
+          });
+        }
+      } else if (isLoadMore) {
         setTweets((prev) => {
-          const prevIds = new Set(prev.map((t: any) => t._id));
-          const toPrepend = newList.filter((t: any) => !prevIds.has(t._id));
-          if (toPrepend.length === 0) return prev;
-          return [...toPrepend, ...prev];
+          const existingIds = new Set(prev.map((t: any) => t._id?.toString()));
+          const toAppend = newList.filter((t: any) => !existingIds.has(t._id?.toString()));
+          return toAppend.length ? [...prev, ...toAppend] : prev;
         });
+        setPage(requestPage);
+        setHasMore((pagination.page ?? requestPage) < (pagination.totalPages ?? 1));
       } else {
         setTweets(newList);
+        setPage(1);
+        setHasMore((pagination.page ?? 1) < (pagination.totalPages ?? 1));
       }
-      if (!appendNewOnly) console.log('✅ Fetched tweets:', newList.length);
+      if (!appendNewOnly && !isLoadMore) console.log('✅ Fetched tweets:', newList.length);
     } catch (error) {
       console.error('❌ Error fetching tweets:', error);
-      if (!appendNewOnly) setTweets([]);
+      if (!appendNewOnly && !isLoadMore) setTweets([]);
+      if (isLoadMore) setHasMore(false);
     } finally {
-      if (!appendNewOnly) setLoading(false);
+      if (!appendNewOnly && !isLoadMore) setLoading(false);
+      if (isLoadMore) setLoadingMore(false);
     }
   };
 
-  // Real-time: poll feed every 20s and prepend new tweets (like real Twitter)
-  const FEED_POLL_MS = 20000;
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchTweets(true);
-    }, FEED_POLL_MS);
-    return () => clearInterval(interval);
-  }, [activeTab]);
+  const loadMore = () => {
+    if (loadingMore || !hasMore) return;
+    fetchTweets(false, page + 1);
+  };
 
-  // Real-time: Socket.io – prepend new tweet as soon as someone posts
+  const applyNewTweetsBubble = () => {
+    const pending = pendingNewTweetsRef.current;
+    if (pending.length === 0) return;
+    setTweets((prev) => {
+      const prevIds = new Set(prev.map((t: any) => t._id?.toString()));
+      const toPrepend = pending.filter((t: any) => !prevIds.has(t._id?.toString()));
+      return toPrepend.length ? [...toPrepend, ...prev] : prev;
+    });
+    pendingNewTweetsRef.current = [];
+    setNewTweetsCount(0);
+  };
+
+  // Real-time: Socket.io only (scales to millions of users – no polling)
+  // New tweet: prepend if at top, else show "X posted" bubble (like real Twitter)
   useEffect(() => {
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     socket.on('newTweet', (tweet: any) => {
       if (!tweet || !tweet._id) return;
-      setTweets((prev) => {
-        const id = typeof tweet._id === 'string' ? tweet._id : tweet._id.toString();
-        if (prev.some((t: any) => (t._id || t.id)?.toString() === id)) return prev;
-        return [{ ...tweet, _id: tweet._id }, ...prev];
-      });
+      const id = typeof tweet._id === 'string' ? tweet._id : tweet._id.toString();
+      const atTop = lastScrollY.current <= SCROLL_THRESHOLD_FOR_BUBBLE;
+      if (atTop) {
+        setTweets((prev) => {
+          if (prev.some((t: any) => (t._id || t.id)?.toString() === id)) return prev;
+          return [{ ...tweet, _id: tweet._id }, ...prev];
+        });
+      } else {
+        setTweets((prev) => {
+          if (prev.some((t: any) => (t._id || t.id)?.toString() === id)) return prev;
+          const inPending = pendingNewTweetsRef.current.some((t: any) => (t._id || t.id)?.toString() === id);
+          if (!inPending) {
+            pendingNewTweetsRef.current = [{ ...tweet, _id: tweet._id }, ...pendingNewTweetsRef.current];
+            setNewTweetsCount((c) => c + 1);
+          }
+          return prev;
+        });
+      }
     });
     return () => {
       socket.off('newTweet');
@@ -256,6 +322,8 @@ const FeedScreen = ({ navigation }: any) => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setPage(1);
+    setHasMore(true);
     await fetchTweets();
     setRefreshing(false);
   };
@@ -603,6 +671,15 @@ const FeedScreen = ({ navigation }: any) => {
           style={styles.feed}
           onScroll={handleScroll}
           scrollEventThrottle={16}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.loadMoreFooter}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
           }
@@ -617,6 +694,41 @@ const FeedScreen = ({ navigation }: any) => {
           )}
         />
       )}
+
+      {/* Blue pill with avatars + "posted" – like real Twitter when new posts arrive and not at top */}
+      {newTweetsCount > 0 && (() => {
+        const pending = pendingNewTweetsRef.current;
+        const authors = pending
+          .map((t: any) => t.author)
+          .filter(Boolean);
+        const uniqueAuthors = authors.filter(
+          (a: any, i: number) => authors.findIndex((b: any) => (b._id || b.id) === (a._id || a.id)) === i
+        );
+        const avatarUrls = uniqueAuthors.slice(0, 3).map((a: any) => a.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png');
+        return (
+          <TouchableOpacity
+            style={styles.newPostsBubble}
+            onPress={applyNewTweetsBubble}
+            activeOpacity={0.85}
+          >
+            <Icon name="keyboard-arrow-up" size={22} color={COLORS.white} />
+            {avatarUrls.length > 0 && (
+              <View style={styles.newPostsBubbleAvatars}>
+                {avatarUrls.map((uri: string, i: number) => (
+                  <Image
+                    key={`${uri}-${i}`}
+                    source={{ uri }}
+                    style={[styles.newPostsBubbleAvatar, { marginLeft: i === 0 ? 0 : -8 }]}
+                  />
+                ))}
+              </View>
+            )}
+            <Text style={styles.newPostsBubbleText}>
+              {newTweetsCount === 1 ? 'posted' : `${newTweetsCount} posted`}
+            </Text>
+          </TouchableOpacity>
+        );
+      })()}
 
       {/* Overlay (blurred white) – appears instantly when FAB is pressed */}
       {fabExpanded && (
@@ -877,6 +989,45 @@ const styles = StyleSheet.create({
   },
   feed: {
     flex: 1,
+  },
+  loadMoreFooter: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newPostsBubble: {
+    position: 'absolute',
+    top: 100,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  newPostsBubbleAvatars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  newPostsBubbleAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.backgroundLight,
+  },
+  newPostsBubbleText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '700',
   },
   loadingContainer: {
     paddingVertical: 100,
