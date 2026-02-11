@@ -22,9 +22,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { io } from 'socket.io-client';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SOCKET_URL } from '../../utils/constants';
 import { useUser } from '../../context/UserContext';
 import { apiService } from '../../services/api';
+import { NotificationPermissionModal } from '../../components/NotificationPermissionModal';
+import oneSignalService from '../../services/onesignal';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.85, 320);
@@ -170,6 +173,7 @@ const FeedScreen = ({ navigation }: any) => {
   const [visibleVideoIndex, setVisibleVideoIndex] = useState<number | null>(null);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [notificationPermissionVisible, setNotificationPermissionVisible] = useState(false);
   const drawerSlide = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const drawerBackdropOpacity = useRef(new Animated.Value(0)).current;
   const fabSpin = useRef(new Animated.Value(0)).current;
@@ -211,6 +215,18 @@ const FeedScreen = ({ navigation }: any) => {
     setHasMore(true);
     fetchTweets();
   }, [activeTab]);
+
+  // Check if we should show notification permission modal (like Twitter)
+  useEffect(() => {
+    const checkNotificationPermission = async () => {
+      if (!user?._id) return;
+      const asked = await AsyncStorage.getItem('notificationPermissionAsked');
+      if (!asked) {
+        setTimeout(() => setNotificationPermissionVisible(true), 1500);
+      }
+    };
+    checkNotificationPermission();
+  }, [user?._id]);
 
   const fetchTweets = async (appendNewOnly = false, pageToFetch?: number) => {
     const currentFeedType = appendNewOnly ? feedTypeRef.current : feedType;
@@ -791,6 +807,20 @@ const FeedScreen = ({ navigation }: any) => {
           )}
         </TouchableOpacity>
       </Animated.View>
+
+      {/* Notification permission modal (Twitter-style) */}
+      <NotificationPermissionModal
+        visible={notificationPermissionVisible}
+        onAllow={async () => {
+          await oneSignalService.requestPermission();
+          await AsyncStorage.setItem('notificationPermissionAsked', 'true');
+          setNotificationPermissionVisible(false);
+        }}
+        onNotNow={async () => {
+          await AsyncStorage.setItem('notificationPermissionAsked', 'true');
+          setNotificationPermissionVisible(false);
+        }}
+      />
     </View>
   );
 };

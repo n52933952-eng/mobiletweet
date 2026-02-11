@@ -93,6 +93,27 @@ const post = async (url: string, data?: any): Promise<any> => {
 };
 
 /**
+ * PATCH Request
+ */
+const patch = async (url: string, data?: any): Promise<any> => {
+  try {
+    const token = await getToken();
+    const response = await fetch(`${API_URL}${url}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+    return await handleResponse(response);
+  } catch (error: any) {
+    console.error('PATCH error:', error);
+    throw error;
+  }
+};
+
+/**
  * PUT Request
  */
 const put = async (url: string, data?: any): Promise<any> => {
@@ -165,6 +186,7 @@ export const apiService = {
   get,
   post,
   put,
+  patch,
   delete: deleteRequest,
   upload,
 };

@@ -89,7 +89,6 @@ const MainTabs = () => {
         component={NotificationsScreen}
         options={{
           tabBarIcon: ({ focused }) => <TabBarIcon focused={focused} icon="🔔" />,
-          tabBarBadge: 3, // Example: show unread count
           tabBarBadgeStyle: {
             backgroundColor: COLORS.primary,
             color: COLORS.white,

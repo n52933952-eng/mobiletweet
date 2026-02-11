@@ -6,9 +6,11 @@
 import React, { useEffect } from 'react';
 import { StatusBar, I18nManager } from 'react-native';
 import { UserProvider } from './src/context/UserContext';
+import { NotificationProvider } from './src/context/NotificationContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { COLORS } from './src/utils/constants';
 import './src/config/firebase'; // Initialize Firebase & Google Sign-In
+import oneSignalService from './src/services/onesignal';
 
 function App(): React.JSX.Element {
   useEffect(() => {
@@ -16,9 +18,11 @@ function App(): React.JSX.Element {
     if (I18nManager.isRTL) {
       I18nManager.allowRTL(false);
       I18nManager.forceRTL(false);
-      // Note: App needs restart for RTL changes to take effect
-      // But we're preventing RTL from ever being enabled
     }
+
+    // Initialize OneSignal for push notifications
+    console.log('🔔 [App] Initializing OneSignal...');
+    oneSignalService.initialize();
   }, []);
 
   return (
@@ -28,7 +32,9 @@ function App(): React.JSX.Element {
         backgroundColor={COLORS.white}
       />
       <UserProvider>
-        <AppNavigator />
+        <NotificationProvider>
+          <AppNavigator />
+        </NotificationProvider>
       </UserProvider>
     </>
   );

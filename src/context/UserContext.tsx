@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect, ReactNode } from
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS, ENDPOINTS } from '../utils/constants';
 import { apiService, setLogoutCallback } from '../services/api';
+import oneSignalService from '../services/onesignal';
 
 interface User {
   _id: string;
@@ -52,6 +53,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       await AsyncStorage.removeItem(STORAGE_KEYS.USER);
       await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
       setUserState(null);
+      oneSignalService.removeUserId();
     });
   }, []);
 
@@ -66,7 +68,11 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
 
       if (userData && token) {
-        setUserState(JSON.parse(userData));
+        const u = JSON.parse(userData);
+        setUserState(u);
+        if (u?._id) {
+          oneSignalService.setUserId(u._id);
+        }
       }
     } catch (error) {
       console.error('Error loading user:', error);
@@ -81,7 +87,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, token);
       await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userData));
       setUserState(userData);
-      
+      if (userData._id) {
+        oneSignalService.setUserId(userData._id);
+      }
       console.log('✅ User logged in:', userData.username);
     } catch (error) {
       console.error('Error saving user:', error);
@@ -102,7 +110,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       await AsyncStorage.removeItem(STORAGE_KEYS.USER);
       await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
       setUserState(null);
-      
+      oneSignalService.removeUserId();
       console.log('✅ User logged out');
     } catch (error) {
       console.error('Error logging out:', error);
