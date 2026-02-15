@@ -71,6 +71,7 @@ const NotificationsScreen = ({ navigation }: any) => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const lastScrollY = useRef(0);
+  const initialFetchDone = useRef(false);
 
   const tabBarStyle = {
     display: 'flex' as const,
@@ -82,6 +83,7 @@ const NotificationsScreen = ({ navigation }: any) => {
     paddingTop: 8,
   };
 
+  // Fetch from API only (no refetch on socket updates – real-time comes from context)
   const fetchNotifications = useCallback(async (pageNum: number = 1, append: boolean = false) => {
     try {
       if (pageNum === 1 && !append) setLoading(true);
@@ -96,9 +98,7 @@ const NotificationsScreen = ({ navigation }: any) => {
           return toAdd.length ? [...prev, ...toAdd] : prev;
         });
       } else {
-        const all = [...newNotifications.map(n => n as NotificationItem), ...list];
-        const unique = all.filter((n, i) => all.findIndex(x => x._id === n._id) === i);
-        setNotifications(unique);
+        setNotifications(list);
       }
       setPage(pageNum);
       setHasMore((pagination.page ?? pageNum) < (pagination.totalPages ?? 1));
@@ -116,11 +116,33 @@ const NotificationsScreen = ({ navigation }: any) => {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [navigation, newNotifications, clearUnread, clearNew]);
+  }, [clearUnread, clearNew]);
 
+  // Initial load once on mount only – no refetch when context updates (real-time via socket)
   useEffect(() => {
+    if (initialFetchDone.current) return;
+    initialFetchDone.current = true;
     fetchNotifications(1);
   }, [fetchNotifications]);
+
+  // Display list = socket notifications (real-time) on top, then API list – dedupe by _id
+  const displayList = React.useMemo(() => {
+    const seen = new Set<string>();
+    const out: NotificationItem[] = [];
+    for (const n of newNotifications as NotificationItem[]) {
+      if (!seen.has(n._id)) {
+        seen.add(n._id);
+        out.push(n);
+      }
+    }
+    for (const n of notifications) {
+      if (!seen.has(n._id)) {
+        seen.add(n._id);
+        out.push(n);
+      }
+    }
+    return out;
+  }, [newNotifications, notifications]);
 
   useEffect(() => {
     navigation.setOptions({
@@ -190,14 +212,6 @@ const NotificationsScreen = ({ navigation }: any) => {
     );
   };
 
-  if (loading && notifications.length === 0) {
-    return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -218,7 +232,7 @@ const NotificationsScreen = ({ navigation }: any) => {
         </TouchableOpacity>
       </View>
       <FlatList
-        data={notifications}
+        data={displayList}
         keyExtractor={item => item._id}
         renderItem={renderItem}
         onScroll={handleScroll}
@@ -228,11 +242,17 @@ const NotificationsScreen = ({ navigation }: any) => {
         ListFooterComponent={loadingMore ? <View style={styles.footer}><ActivityIndicator size="small" color={COLORS.primary} /></View> : null}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Icon name="notifications-none" size={48} color={COLORS.textSecondary} />
-            <Text style={styles.emptyStateText}>No notifications yet</Text>
-            <Text style={styles.emptyStateSubtext}>When you get likes, retweets, or new followers, they'll show here</Text>
-          </View>
+          loading && displayList.length === 0 ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="notifications-none" size={48} color={COLORS.textSecondary} />
+              <Text style={styles.emptyStateText}>No notifications yet</Text>
+              <Text style={styles.emptyStateSubtext}>When you get likes, retweets, or new followers, they'll show here</Text>
+            </View>
+          )
         }
       />
     </View>
@@ -283,6 +303,13 @@ const styles = StyleSheet.create({
   tweetPreview: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4, marginBottom: 2 },
   time: { fontSize: TWITTER_STYLES.fontSize.small, color: COLORS.textSecondary },
   footer: { paddingVertical: 16, alignItems: 'center' },
+  loadingState: {
+    flex: 1,
+    minHeight: 200,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 48,
+  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',

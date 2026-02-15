@@ -52,14 +52,8 @@ class OneSignalService {
       console.log('✅ [OneSignal] OneSignal.initialize() completed');
       this.isInitialized = true;
 
-      // Android 13+ requires runtime permission
-      if (Platform.OS === 'android' && Platform.Version >= 33) {
-        console.log('🔔 [OneSignal] Android 13+: Requesting POST_NOTIFICATIONS permission...');
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-        );
-        console.log('🔔 [OneSignal] POST_NOTIFICATIONS permission result:', granted);
-      }
+      // Don't request system permission here – show our "Turn on notifications?" modal
+      // on the home screen first, then request via requestPermission() when user taps Allow.
 
       // Notification received in foreground
       OneSignal.Notifications.addEventListener('foregroundWillDisplay', (event) => {
@@ -116,13 +110,13 @@ class OneSignalService {
       OneSignal.login(userId);
       console.log('✅ [OneSignal] User linked to OneSignal');
 
-      // Log subscription info
+      // Log subscription info (use async APIs to avoid deprecation warnings)
       setTimeout(async () => {
         try {
           const pushSubscription = OneSignal.User.pushSubscription;
-          const subscriptionId = pushSubscription.getPushSubscriptionId();
-          const optedIn = pushSubscription.getOptedIn();
-          console.log('📱 [OneSignal] Subscription ID:', subscriptionId);
+          const subscriptionId = await pushSubscription.getIdAsync();
+          const optedIn = await pushSubscription.getOptedInAsync();
+          console.log('📱 [OneSignal] Subscription ID:', subscriptionId ?? '(none)');
           console.log('📱 [OneSignal] Opted In:', optedIn);
           console.log('📱 [OneSignal] External User ID:', userId);
         } catch (e) {
@@ -148,7 +142,7 @@ class OneSignalService {
     }
   }
 
-  // Request notification permission (called from modal "Allow" button)
+  // Request notification permission (called when user taps "Allow" on home screen modal)
   async requestPermission() {
     if (!OneSignal || !OneSignal.Notifications) {
       console.warn('⚠️ [OneSignal] OneSignal not available');
@@ -157,6 +151,16 @@ class OneSignalService {
 
     try {
       console.log('🔔 [OneSignal] Requesting notification permission...');
+      // Android 13+: show system POST_NOTIFICATIONS dialog first
+      if (Platform.OS === 'android' && Platform.Version >= 33) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          console.log('🔔 [OneSignal] User denied system permission');
+          return false;
+        }
+      }
       const permissionGranted = await OneSignal.Notifications.requestPermission(true);
       console.log('✅ [OneSignal] Permission granted:', permissionGranted);
       return permissionGranted;

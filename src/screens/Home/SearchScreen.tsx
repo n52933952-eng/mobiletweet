@@ -97,7 +97,7 @@ const SearchScreen = ({ navigation }: any) => {
   const fetchSuggested = useCallback(async () => {
     try {
       const res = await apiService.get('/api/users/suggested?limit=20');
-      const users = (res.users || []).map((u: any) => ({ ...u, isFollowing: false }));
+      const users = (res.users || []).map((u: any) => ({ ...u, isFollowing: u.isFollowing ?? false }));
       setSuggestedUsers(users);
     } catch (e) {
       console.error('Suggested users', e);

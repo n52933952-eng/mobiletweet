@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, useRef, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../utils/constants';
 import { useUser } from './UserContext';
@@ -64,11 +64,16 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [user?._id]);
 
-  const clearUnread = () => setUnreadCount(0);
-  const clearNew = () => setNewNotifications([]);
+  const clearUnread = useCallback(() => setUnreadCount(0), []);
+  const clearNew = useCallback(() => setNewNotifications([]), []);
+
+  const value = useMemo(
+    () => ({ unreadCount, newNotifications, clearUnread, clearNew }),
+    [unreadCount, newNotifications, clearUnread, clearNew],
+  );
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, newNotifications, clearUnread, clearNew }}>
+    <NotificationContext.Provider value={value}>
       {children}
     </NotificationContext.Provider>
   );

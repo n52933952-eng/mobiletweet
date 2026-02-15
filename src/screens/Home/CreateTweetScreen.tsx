@@ -7,29 +7,48 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import { COLORS, TWITTER_STYLES } from '../../utils/constants';
+import { useUser } from '../../context/UserContext';
+import { apiService } from '../../services/api';
+
+const DEFAULT_AVATAR = 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png';
 
 const CreateTweetScreen = ({ navigation, route }: any) => {
+  const { user } = useUser();
   const [tweetText, setTweetText] = useState('');
+  const [posting, setPosting] = useState(false);
   const maxLength = 280;
   const isReply = route?.params?.isReply || false;
   const replyToTweet = route?.params?.tweet;
 
   const handlePost = async () => {
-    if (tweetText.trim().length === 0) {
+    const text = tweetText.trim();
+    if (text.length === 0) {
       Alert.alert('Error', 'Tweet cannot be empty');
       return;
     }
+    if (text.length > maxLength) {
+      Alert.alert('Error', `Tweet cannot exceed ${maxLength} characters`);
+      return;
+    }
 
+    setPosting(true);
     try {
-      // TODO: Implement API call to post tweet
-      console.log('Posting tweet:', tweetText);
-      Alert.alert('Success', 'Tweet posted!', [
-        { text: 'OK', onPress: () => navigation.goBack() }
-      ]);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to post tweet');
+      const body: { text: string; replyTo?: string } = { text };
+      if (isReply && replyToTweet?._id) {
+        body.replyTo = typeof replyToTweet._id === 'string' ? replyToTweet._id : replyToTweet._id.toString();
+      }
+      await apiService.post('/api/tweets', body);
+      setTweetText('');
+      navigation.goBack();
+    } catch (err: any) {
+      const message = err?.message || 'Failed to post tweet';
+      Alert.alert('Error', message);
+    } finally {
+      setPosting(false);
     }
   };
 
@@ -51,17 +70,22 @@ const CreateTweetScreen = ({ navigation, route }: any) => {
           <Text style={styles.cancelText}>✕</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[
             styles.postButton,
-            tweetText.trim().length === 0 && styles.postButtonDisabled
+            (tweetText.trim().length === 0 || tweetText.length > maxLength) && !posting && styles.postButtonDisabled,
+            posting && styles.postButtonLoading,
           ]}
           onPress={handlePost}
-          disabled={tweetText.trim().length === 0 || tweetText.length > maxLength}
+          disabled={tweetText.trim().length === 0 || tweetText.length > maxLength || posting}
         >
-          <Text style={styles.postButtonText}>
-            {isReply ? 'Reply' : 'Post'}
-          </Text>
+          {posting ? (
+            <ActivityIndicator size="small" color={COLORS.white} />
+          ) : (
+            <Text style={styles.postButtonText}>
+              {isReply ? 'Reply' : 'Post'}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -77,9 +101,10 @@ const CreateTweetScreen = ({ navigation, route }: any) => {
 
         {/* User Avatar */}
         <View style={styles.tweetComposer}>
-          <View style={styles.avatarPlaceholder}>
-            <Text style={styles.avatarText}>U</Text>
-          </View>
+          <Image
+            source={{ uri: user?.profilePic || DEFAULT_AVATAR }}
+            style={styles.avatar}
+          />
           
           <View style={styles.inputContainer}>
             <TextInput
@@ -160,10 +185,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 20,
+    minWidth: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   postButtonDisabled: {
     backgroundColor: COLORS.backgroundLight,
     opacity: 0.5,
+  },
+  postButtonLoading: {
+    opacity: 1,
   },
   postButtonText: {
     color: COLORS.white,
@@ -191,19 +222,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingTop: 15,
   },
-  avatarPlaceholder: {
+  avatar: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
     marginRight: 12,
-  },
-  avatarText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: 'bold',
   },
   inputContainer: {
     flex: 1,

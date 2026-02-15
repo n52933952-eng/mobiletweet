@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -26,19 +27,32 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SOCKET_URL } from '../../utils/constants';
 import { useUser } from '../../context/UserContext';
 import { apiService } from '../../services/api';
-import { NotificationPermissionModal } from '../../components/NotificationPermissionModal';
 import oneSignalService from '../../services/onesignal';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.85, 320);
 
-// Tweet Card Component
-const TweetCard = ({ tweet, navigation, isVisible }: any) => {
-  const [liked, setLiked] = useState(false);
-  const [retweeted, setRetweeted] = useState(false);
+// Tweet Card Component – memoized so list doesn't re-render every item on state change
+const TweetCard = memo(({ tweet, navigation, isVisible, currentUserId }: any) => {
+  const isLikedByMe = tweet.likes?.some((id: any) => String(id) === String(currentUserId));
+  const isRetweetedByMe = tweet.retweets?.some((id: any) => String(id) === String(currentUserId));
+  const [liked, setLiked] = useState(!!isLikedByMe);
+  const [retweeted, setRetweeted] = useState(!!isRetweetedByMe);
+  const [likeCount, setLikeCount] = useState(tweet.likeCount ?? 0);
+  const [retweetCount, setRetweetCount] = useState(tweet.retweetCount ?? 0);
+  const [likeLoading, setLikeLoading] = useState(false);
+  const [retweetLoading, setRetweetLoading] = useState(false);
   const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(true);
   const videoRef = useRef<any>(null);
+
+  // Sync from tweet when it changes (e.g. after refetch)
+  useEffect(() => {
+    setLikeCount(tweet.likeCount ?? 0);
+    setRetweetCount(tweet.retweetCount ?? 0);
+    setLiked(!!tweet.likes?.some((id: any) => String(id) === String(currentUserId)));
+    setRetweeted(!!tweet.retweets?.some((id: any) => String(id) === String(currentUserId)));
+  }, [tweet._id, tweet.likeCount, tweet.retweetCount, currentUserId]);
 
   // Auto-play video when visible
   useEffect(() => {
@@ -49,74 +63,130 @@ const TweetCard = ({ tweet, navigation, isVisible }: any) => {
     }
   }, [isVisible, tweet.media]);
 
+  const goToDetail = () => navigation.navigate('TweetDetail', { tweetId: tweet._id, tweet });
+
+  const handleLike = async () => {
+    if (likeLoading) return;
+    const nextLiked = !liked;
+    setLiked(nextLiked);
+    setLikeCount((c) => (nextLiked ? c + 1 : Math.max(0, c - 1)));
+    setLikeLoading(true);
+    try {
+      const res = await apiService.post(`/api/tweets/${tweet._id}/like`, {});
+      setLiked(res.liked);
+      if (typeof res.likeCount === 'number') setLikeCount(res.likeCount);
+    } catch (e) {
+      setLiked(liked);
+      setLikeCount(tweet.likeCount ?? 0);
+      console.warn('Like failed', e);
+    } finally {
+      setLikeLoading(false);
+    }
+  };
+
+  const handleRetweet = async () => {
+    if (retweetLoading) return;
+    const nextRetweeted = !retweeted;
+    setRetweeted(nextRetweeted);
+    setRetweetCount((c) => (nextRetweeted ? c + 1 : Math.max(0, c - 1)));
+    setRetweetLoading(true);
+    try {
+      const res = await apiService.post(`/api/tweets/${tweet._id}/retweet`, {});
+      setRetweeted(res.retweeted);
+      if (typeof res.retweetCount === 'number') setRetweetCount(res.retweetCount);
+    } catch (e) {
+      setRetweeted(retweeted);
+      setRetweetCount(tweet.retweetCount ?? 0);
+      console.warn('Retweet failed', e);
+    } finally {
+      setRetweetLoading(false);
+    }
+  };
+
   return (
     <View style={styles.tweetCard}>
-      {/* Tweet Header */}
-      <View style={styles.tweetHeader}>
-        {/* Profile Picture */}
-        <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: tweet.author._id })}>
-          <Image
-            source={{ uri: tweet.author.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png' }}
-            style={styles.avatar}
-          />
-        </TouchableOpacity>
+      {/* Tappable area: header + text (navigate to detail). Video has its own tap. */}
+      <TouchableOpacity activeOpacity={1} onPress={goToDetail}>
+        {/* Tweet Header */}
+        <View style={styles.tweetHeader}>
+          {/* Profile Picture */}
+          <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: tweet.author._id })}>
+            <Image
+              source={{ uri: tweet.author.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png' }}
+              style={styles.avatar}
+            />
+          </TouchableOpacity>
 
-        {/* Tweet Content */}
-        <View style={styles.tweetContent}>
-          {/* User Info */}
-          <View style={styles.userInfo}>
-            <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: tweet.author._id })}>
-              <View style={styles.userNameRow}>
-                <Text style={styles.userName}>{tweet.author.name}</Text>
-                {tweet.author.verified && <Text style={styles.verifiedBadge}>✓</Text>}
-              </View>
-            </TouchableOpacity>
-            <Text style={styles.userHandle}>@{tweet.author.username}</Text>
-            <Text style={styles.separator}>·</Text>
-            <Text style={styles.timestamp}>{formatTimestamp(tweet.createdAt)}</Text>
+          {/* Tweet Content */}
+          <View style={styles.tweetContent}>
+            {/* User Info */}
+            <View style={styles.userInfo}>
+              <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: tweet.author._id })}>
+                <View style={styles.userNameRow}>
+                  <Text style={styles.userName}>{tweet.author.name}</Text>
+                  {tweet.author.verified && <Text style={styles.verifiedBadge}>✓</Text>}
+                </View>
+              </TouchableOpacity>
+              <Text style={styles.userHandle}>@{tweet.author.username}</Text>
+              <Text style={styles.separator}>·</Text>
+              <Text style={styles.timestamp}>{formatTimestamp(tweet.createdAt)}</Text>
+            </View>
+
+            {/* Tweet Text */}
+            <Text style={styles.tweetText}>{tweet.text}</Text>
           </View>
+        </View>
+      </TouchableOpacity>
 
-          {/* Tweet Text */}
-          <Text style={styles.tweetText}>{tweet.text}</Text>
-
-          {/* Tweet Media (if exists) */}
-          {tweet.media && tweet.media.length > 0 && (
-            <View style={styles.mediaContainer}>
-              {tweet.media[0].type === 'image' ? (
-                <Image
-                  source={{ uri: tweet.media[0].url }}
-                  style={styles.tweetImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <TouchableOpacity 
-                  style={styles.videoContainer}
-                  activeOpacity={1}
-                  onPress={() => setMuted(!muted)}
-                >
-                  <Video
-                    ref={videoRef}
-                    source={{ uri: tweet.media[0].url }}
-                    style={styles.tweetVideo}
-                    resizeMode="cover"
-                    repeat={true}
-                    paused={paused}
-                    muted={muted}
-                    playInBackground={false}
-                    playWhenInactive={false}
-                  />
-                  
-                  {/* Mute/Unmute Button */}
-                  <View style={styles.muteButton}>
-                    <Text style={styles.muteIcon}>{muted ? '🔇' : '🔊'}</Text>
-                  </View>
-                </TouchableOpacity>
+      {/* Media: video = play/pause tap, image = go to detail */}
+      {tweet.media && tweet.media.length > 0 && (
+        <View style={styles.mediaContainer}>
+          {tweet.media[0].type === 'image' ? (
+            <TouchableOpacity activeOpacity={1} onPress={goToDetail}>
+              <Image
+                source={{ uri: tweet.media[0].url }}
+                style={styles.tweetImage}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.videoContainer}>
+              <Video
+                ref={videoRef}
+                source={{ uri: tweet.media[0].url }}
+                style={styles.tweetVideo}
+                resizeMode="cover"
+                repeat={true}
+                paused={paused}
+                muted={muted}
+                playInBackground={false}
+                playWhenInactive={false}
+              />
+              {paused && (
+                <View style={styles.videoPlayOverlay} pointerEvents="none">
+                  <Text style={styles.videoPlayIcon}>▶</Text>
+                </View>
               )}
+              {/* Transparent overlay so tap always triggers play/pause (Video can steal touches) */}
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setPaused((p) => !p)}
+              />
+              <TouchableOpacity
+                style={styles.muteButton}
+                onPress={() => setMuted((m) => !m)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.muteIcon}>{muted ? '🔇' : '🔊'}</Text>
+              </TouchableOpacity>
             </View>
           )}
+        </View>
+      )}
 
-          {/* Tweet Actions */}
-          <View style={styles.tweetActions}>
+      {/* Tweet Actions */}
+      <View style={styles.tweetActions}>
             {/* Reply */}
             <TouchableOpacity style={styles.actionButton}>
               <Text style={styles.actionIcon}>💬</Text>
@@ -126,24 +196,30 @@ const TweetCard = ({ tweet, navigation, isVisible }: any) => {
             {/* Retweet */}
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => setRetweeted(!retweeted)}
+              onPress={handleRetweet}
+              disabled={retweetLoading}
+              hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+              activeOpacity={0.6}
             >
               <Text style={[styles.actionIcon, retweeted && styles.actionIconActive]}>🔁</Text>
               <Text style={[styles.actionCount, retweeted && styles.actionCountActive]}>
-                {tweet.retweetCount || 0}
+                {retweetCount}
               </Text>
             </TouchableOpacity>
 
             {/* Like */}
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => setLiked(!liked)}
+              onPress={handleLike}
+              disabled={likeLoading}
+              hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+              activeOpacity={0.6}
             >
               <Text style={[styles.actionIcon, liked && styles.actionIconLiked]}>
                 {liked ? '❤️' : '🤍'}
               </Text>
               <Text style={[styles.actionCount, liked && styles.actionCountLiked]}>
-                {tweet.likeCount || 0}
+                {likeCount}
               </Text>
             </TouchableOpacity>
 
@@ -158,11 +234,9 @@ const TweetCard = ({ tweet, navigation, isVisible }: any) => {
               <Text style={styles.actionIcon}>🔗</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
     </View>
   );
-};
+});
 
 const FeedScreen = ({ navigation }: any) => {
   const { user, logout } = useUser();
@@ -173,7 +247,6 @@ const FeedScreen = ({ navigation }: any) => {
   const [visibleVideoIndex, setVisibleVideoIndex] = useState<number | null>(null);
   const [fabExpanded, setFabExpanded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [notificationPermissionVisible, setNotificationPermissionVisible] = useState(false);
   const drawerSlide = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const drawerBackdropOpacity = useRef(new Animated.Value(0)).current;
   const fabSpin = useRef(new Animated.Value(0)).current;
@@ -216,17 +289,23 @@ const FeedScreen = ({ navigation }: any) => {
     fetchTweets();
   }, [activeTab]);
 
-  // Check if we should show notification permission modal (like Twitter)
-  useEffect(() => {
-    const checkNotificationPermission = async () => {
+  // Show system notification prompt when Feed is focused. If they tap "Allow", we remember.
+  // If they tap "Don't allow", we don't remember – prompt shows again every time they open the
+  // app or enter the Feed tab until they allow.
+  useFocusEffect(
+    useCallback(() => {
       if (!user?._id) return;
-      const asked = await AsyncStorage.getItem('notificationPermissionAsked');
-      if (!asked) {
-        setTimeout(() => setNotificationPermissionVisible(true), 1500);
-      }
-    };
-    checkNotificationPermission();
-  }, [user?._id]);
+      const t = setTimeout(async () => {
+        const alreadyAllowed = await AsyncStorage.getItem('notificationPermissionAsked');
+        if (alreadyAllowed === 'true') return;
+        const granted = await oneSignalService.requestPermission();
+        if (granted) {
+          await AsyncStorage.setItem('notificationPermissionAsked', 'true');
+        }
+      }, 800);
+      return () => clearTimeout(t);
+    }, [user?._id]),
+  );
 
   const fetchTweets = async (appendNewOnly = false, pageToFetch?: number) => {
     const currentFeedType = appendNewOnly ? feedTypeRef.current : feedType;
@@ -292,6 +371,18 @@ const FeedScreen = ({ navigation }: any) => {
     if (loadingMore || !hasMore) return;
     fetchTweets(false, page + 1);
   };
+
+  const renderTweetItem = useCallback(
+    ({ item, index }: { item: any; index: number }) => (
+      <TweetCard
+        tweet={item}
+        navigation={navigation}
+        isVisible={visibleVideoIndex === index}
+        currentUserId={user?._id}
+      />
+    ),
+    [navigation, visibleVideoIndex, user?._id],
+  );
 
   const applyNewTweetsBubble = () => {
     const pending = pendingNewTweetsRef.current;
@@ -689,6 +780,10 @@ const FeedScreen = ({ navigation }: any) => {
           scrollEventThrottle={16}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          removeClippedSubviews={Platform.OS === 'android'}
           ListFooterComponent={
             loadingMore ? (
               <View style={styles.loadMoreFooter}>
@@ -701,13 +796,7 @@ const FeedScreen = ({ navigation }: any) => {
           }
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
-          renderItem={({ item, index }) => (
-            <TweetCard
-              tweet={item}
-              navigation={navigation}
-              isVisible={visibleVideoIndex === index}
-            />
-          )}
+          renderItem={renderTweetItem}
         />
       )}
 
@@ -808,19 +897,6 @@ const FeedScreen = ({ navigation }: any) => {
         </TouchableOpacity>
       </Animated.View>
 
-      {/* Notification permission modal (Twitter-style) */}
-      <NotificationPermissionModal
-        visible={notificationPermissionVisible}
-        onAllow={async () => {
-          await oneSignalService.requestPermission();
-          await AsyncStorage.setItem('notificationPermissionAsked', 'true');
-          setNotificationPermissionVisible(false);
-        }}
-        onNotNow={async () => {
-          await AsyncStorage.setItem('notificationPermissionAsked', 'true');
-          setNotificationPermissionVisible(false);
-        }}
-      />
     </View>
   );
 };
@@ -1161,6 +1237,13 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 300,
   },
+  videoPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayIcon: { fontSize: 48, color: COLORS.white },
   muteButton: {
     position: 'absolute',
     bottom: 10,
@@ -1196,6 +1279,9 @@ const styles = StyleSheet.create({
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    minHeight: 44,
   },
   actionIcon: {
     fontSize: 16,

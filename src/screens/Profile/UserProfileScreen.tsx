@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   FlatList,
   Image,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { useUser } from '../../context/UserContext';
 import { apiService } from '../../services/api';
@@ -25,8 +25,12 @@ const formatTimestamp = (date: string) => {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-const ProfileTweetRow = ({ tweet, navigation }: any) => (
-  <View style={styles.tweetRow}>
+const ProfileTweetRow = memo(({ tweet, navigation }: any) => (
+  <TouchableOpacity
+    style={styles.tweetRow}
+    activeOpacity={0.7}
+    onPress={() => navigation.navigate('TweetDetail', { tweetId: tweet._id, tweet })}
+  >
     <Image
       source={{ uri: tweet.author?.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png' }}
       style={styles.tweetAvatar}
@@ -49,8 +53,8 @@ const ProfileTweetRow = ({ tweet, navigation }: any) => (
         <Text style={styles.tweetStat}>📊 {tweet.viewCount || 0}</Text>
       </View>
     </View>
-  </View>
-);
+  </TouchableOpacity>
+));
 
 const UserProfileScreen = ({ navigation, route }: any) => {
   const { user: currentUser, logout } = useUser();
@@ -59,6 +63,9 @@ const UserProfileScreen = ({ navigation, route }: any) => {
   const [profileUser, setProfileUser] = useState<any>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [tweets, setTweets] = useState<any[]>([]);
+  const [tweetPage, setTweetPage] = useState(1);
+  const [hasMoreTweets, setHasMoreTweets] = useState(true);
+  const [loadingMoreTweets, setLoadingMoreTweets] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
@@ -85,15 +92,34 @@ const UserProfileScreen = ({ navigation, route }: any) => {
     }
   }, [userId, isOwnProfile, currentUser]);
 
-  const fetchTweets = useCallback(async () => {
+  const fetchTweets = useCallback(async (page = 1, append = false) => {
     const user = isOwnProfile ? currentUser : profileUser;
     if (!user?.username) return;
     try {
-      const res = await apiService.get(`/api/tweets/user/${user.username}`);
-      setTweets(res.tweets || []);
+      if (!append) setLoading(true);
+      if (append) setLoadingMoreTweets(true);
+      const res = await apiService.get(`/api/tweets/user/${user.username}?page=${page}&limit=20`);
+      const list = res.tweets || [];
+      const pagination = res.pagination || {};
+      if (append) {
+        setTweets((prev) => {
+          const ids = new Set(prev.map((t: any) => t._id));
+          const toAdd = list.filter((t: any) => !ids.has(t._id));
+          return toAdd.length ? [...prev, ...toAdd] : prev;
+        });
+        setTweetPage(page);
+        setHasMoreTweets((pagination.page ?? page) < (pagination.totalPages ?? 1));
+      } else {
+        setTweets(list);
+        setTweetPage(1);
+        setHasMoreTweets((pagination.page ?? 1) < (pagination.totalPages ?? 1));
+      }
     } catch (e) {
       console.error('Failed to load tweets', e);
-      setTweets([]);
+      if (!append) setTweets([]);
+    } finally {
+      setLoading(false);
+      setLoadingMoreTweets(false);
     }
   }, [isOwnProfile, currentUser, profileUser]);
 
@@ -111,9 +137,19 @@ const UserProfileScreen = ({ navigation, route }: any) => {
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchProfile();
-    await fetchTweets();
+    await fetchTweets(1, false);
     setRefreshing(false);
   };
+
+  const loadMoreTweets = useCallback(() => {
+    if (loadingMoreTweets || !hasMoreTweets) return;
+    fetchTweets(tweetPage + 1, true);
+  }, [loadingMoreTweets, hasMoreTweets, tweetPage, fetchTweets]);
+
+  const renderTweetItem = useCallback(
+    ({ item }: { item: any }) => <ProfileTweetRow tweet={item} navigation={navigation} />,
+    [navigation],
+  );
 
   const handleFollow = async () => {
     if (!userId || followLoading) return;
@@ -174,61 +210,72 @@ const UserProfileScreen = ({ navigation, route }: any) => {
         <View style={{ width: 30 }} />
       </View>
 
-      <ScrollView
+      <FlatList
+        data={tweets}
+        keyExtractor={(item) => item._id}
         style={styles.content}
+        contentContainerStyle={tweets.length === 0 ? styles.listContentEmpty : undefined}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
         }
-      >
-        <View style={styles.coverPhoto} />
-
-        <View style={styles.profilePicContainer}>
-          <Image
-            source={{ uri: displayUser?.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png' }}
-            style={styles.profilePic}
-          />
-        </View>
-
-        <View style={styles.userInfo}>
-          <Text style={styles.name}>{displayUser?.name}</Text>
-          <Text style={styles.username}>@{displayUser?.username}</Text>
-          {displayUser?.bio ? <Text style={styles.bio}>{displayUser.bio}</Text> : null}
-
-          <View style={styles.stats}>
-            <Text style={styles.statNumber}>{displayUser?.followingCount ?? 0}</Text>
-            <Text style={styles.statLabel}> Following</Text>
-            <Text style={styles.statNumber}>{displayUser?.followerCount ?? 0}</Text>
-            <Text style={styles.statLabel}> Followers</Text>
-          </View>
-
-          {isOwnProfile ? (
-            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-              <Text style={styles.logoutButtonText}>Log out</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.followButton, isFollowing && styles.followingButton]}
-              onPress={handleFollow}
-              disabled={followLoading}
-            >
-              <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
-                {followLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.tweetsSection}>
-          <Text style={styles.tweetsSectionTitle}>Tweets</Text>
-          {tweets.length === 0 ? (
-            <Text style={styles.noTweets}>No tweets yet.</Text>
-          ) : (
-            tweets.map((tweet) => (
-              <ProfileTweetRow key={tweet._id} tweet={tweet} navigation={navigation} />
-            ))
-          )}
-        </View>
-      </ScrollView>
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews={Platform.OS === 'android'}
+        onEndReached={loadMoreTweets}
+        onEndReachedThreshold={0.4}
+        ListHeaderComponent={
+          <>
+            <View style={styles.coverPhoto} />
+            <View style={styles.profilePicContainer}>
+              <Image
+                source={{ uri: displayUser?.profilePic || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png' }}
+                style={styles.profilePic}
+              />
+            </View>
+            <View style={styles.userInfo}>
+              <Text style={styles.name}>{displayUser?.name}</Text>
+              <Text style={styles.username}>@{displayUser?.username}</Text>
+              {displayUser?.bio ? <Text style={styles.bio}>{displayUser.bio}</Text> : null}
+              <View style={styles.stats}>
+                <Text style={styles.statNumber}>{displayUser?.followingCount ?? 0}</Text>
+                <Text style={styles.statLabel}> Following</Text>
+                <Text style={styles.statNumber}>{displayUser?.followerCount ?? 0}</Text>
+                <Text style={styles.statLabel}> Followers</Text>
+              </View>
+              {isOwnProfile ? (
+                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                  <Text style={styles.logoutButtonText}>Log out</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.followButton, isFollowing && styles.followingButton]}
+                  onPress={handleFollow}
+                  disabled={followLoading}
+                >
+                  <Text style={[styles.followButtonText, isFollowing && styles.followingButtonText]}>
+                    {followLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.tweetsSection}>
+              <Text style={styles.tweetsSectionTitle}>Tweets</Text>
+            </View>
+          </>
+        }
+        ListEmptyComponent={
+          !loading ? <Text style={styles.noTweets}>No tweets yet.</Text> : null
+        }
+        ListFooterComponent={
+          loadingMoreTweets ? (
+            <View style={styles.loadMoreFooter}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            </View>
+          ) : null
+        }
+        renderItem={renderTweetItem}
+      />
     </View>
   );
 };
@@ -278,6 +325,13 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  listContentEmpty: {
+    flexGrow: 1,
+  },
+  loadMoreFooter: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
   coverPhoto: {
     height: 120,

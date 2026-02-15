@@ -18,6 +18,7 @@ import NotificationsScreen from '../screens/Home/NotificationsScreen';
 import MessagesScreen from '../screens/Home/MessagesScreen';
 import CreateTweetScreen from '../screens/Home/CreateTweetScreen';
 import UserProfileScreen from '../screens/Profile/UserProfileScreen';
+import TweetDetailScreen from '../screens/Home/TweetDetailScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -130,6 +131,7 @@ const MainStack = () => {
         }}
       />
       <Stack.Screen name="UserProfile" component={UserProfileScreen} />
+      <Stack.Screen name="TweetDetail" component={TweetDetailScreen} />
     </Stack.Navigator>
   );
 };

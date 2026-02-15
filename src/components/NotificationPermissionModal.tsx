@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 15,
-    color: COLORS.lightText,
+    color: COLORS.textSecondary,
     marginBottom: 24,
     textAlign: 'center',
     lineHeight: 22,
@@ -102,7 +102,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   notNowButtonText: {
-    color: COLORS.lightText,
+    color: COLORS.textSecondary,
     fontSize: 16,
     fontWeight: '600',
   },

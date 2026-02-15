@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS, ENDPOINTS } from '../utils/constants';
-import { apiService, setLogoutCallback } from '../services/api';
+import { apiService, setLogoutCallback, clearTokenCache } from '../services/api';
 import oneSignalService from '../services/onesignal';
 
 interface User {
@@ -50,6 +50,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     setLogoutCallback(async () => {
       console.log('🔐 Auto-logout triggered by API');
+      clearTokenCache();
       await AsyncStorage.removeItem(STORAGE_KEYS.USER);
       await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
       setUserState(null);
@@ -83,7 +84,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (token: string, userData: User) => {
     try {
-      // Save token and user data
+      clearTokenCache();
       await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, token);
       await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(userData));
       setUserState(userData);
@@ -106,7 +107,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         console.warn('⚠️ Logout API failed (continuing local logout):', e);
       }
 
-      // Clear local storage
+      clearTokenCache();
       await AsyncStorage.removeItem(STORAGE_KEYS.USER);
       await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
       setUserState(null);

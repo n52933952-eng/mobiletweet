@@ -14,12 +14,22 @@ export const setLogoutCallback = (callback: () => void) => {
   logoutCallback = callback;
 };
 
+// In-memory token cache – avoid hitting AsyncStorage on every request (scale to millions)
+let tokenCache: string | null = null;
+
+export const clearTokenCache = () => {
+  tokenCache = null;
+};
+
 /**
- * Get stored JWT token
+ * Get stored JWT token (memory-first, then AsyncStorage)
  */
 const getToken = async (): Promise<string | null> => {
+  if (tokenCache != null) return tokenCache;
   try {
-    return await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+    const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+    tokenCache = token;
+    return token;
   } catch (error) {
     console.error('Error getting token:', error);
     return null;
@@ -30,9 +40,10 @@ const getToken = async (): Promise<string | null> => {
  * Handle API response
  */
 const handleResponse = async (response: Response) => {
-  // Handle 401 (unauthorized) - auto logout
-  if (response.status === 401 && logoutCallback) {
-    logoutCallback();
+  // Handle 401 (unauthorized) - clear cache and auto logout
+  if (response.status === 401) {
+    tokenCache = null;
+    if (logoutCallback) logoutCallback();
     throw new Error('Session expired. Please login again.');
   }
 
